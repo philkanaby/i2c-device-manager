@@ -8,6 +8,7 @@
         body { font-family: Arial, sans-serif; margin: 20px; }
         .device { border: 1px solid #ccc; padding: 10px; margin: 10px 0; }
         .config-form { margin-top: 10px; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
@@ -26,6 +27,7 @@
         const socket = io();
         let config = { connections: [], new_connections: [], archived_connections: [] };
         let prevConfig = { connections: [], new_connections: [], archived_connections: [] };
+        let pendingDataEvents = [];
 
         socket.on('connect', () => {
             console.log('Connected to server');
@@ -35,15 +37,35 @@
             updateUI(data);
             prevConfig = JSON.parse(JSON.stringify(config));
             config = data;
+            processPendingDataEvents();
         });
 
         socket.on('device_data', (data) => {
             console.log('Received device_data:', data);
             const deviceDiv = document.getElementById(`device-${data.address}`);
             if (!deviceDiv) {
-                console.warn(`No device div found for address ${data.address}`);
+                console.warn(`No device div found for address ${data.address}, queuing event`);
+                pendingDataEvents.push(data);
                 return;
             }
+            handleDeviceData(data);
+        });
+
+        function processPendingDataEvents() {
+            const remainingEvents = [];
+            pendingDataEvents.forEach(data => {
+                const deviceDiv = document.getElementById(`device-${data.address}`);
+                if (deviceDiv) {
+                    handleDeviceData(data);
+                } else {
+                    remainingEvents.push(data);
+                }
+            });
+            pendingDataEvents = remainingEvents;
+        }
+
+        function handleDeviceData(data) {
+            const deviceDiv = document.getElementById(`device-${data.address}`);
             const textElements = deviceDiv.querySelectorAll('.data-text');
             if (textElements.length === 0) {
                 console.warn(`No text elements found for device ${data.address}`);
@@ -53,14 +75,25 @@
                 console.warn(`Invalid data structure for device ${data.address}:`, data.data);
                 return;
             }
+            const validKeys = getValidDataKeys(data.address);
             textElements.forEach(el => {
-                if (el.dataset.key) {
+                if (el.dataset.key && validKeys.includes(el.dataset.key)) {
                     const value = data.data[el.dataset.key];
                     el.value = value !== undefined && value !== null ? value : 'N/A';
                     console.log(`Setting ${el.dataset.key} to ${el.value} for device ${data.address}`);
+                } else {
+                    console.warn(`Invalid or unknown data_key ${el.dataset.key} for device ${data.address}`);
                 }
             });
-        });
+        }
+
+        function getValidDataKeys(address) {
+            const conn = config.connections.find(c => c.address === address);
+            if (!conn || !conn.ui_components) return [];
+            return conn.ui_components
+                .filter(ui => ui.type === 'text' && ui.data_key)
+                .map(ui => ui.data_key);
+        }
 
         function deepEqual(obj1, obj2) {
             if (obj1 === obj2) return true;
@@ -143,7 +176,18 @@
             if (isActive && conn.ui_components) {
                 conn.ui_components.forEach(ui => {
                     if (ui.type === 'text') {
-                        div.innerHTML += `${ui.label}: <input type="text" class="data-text" data-key="${ui.data_key}" readonly><br>`;
+                        const textContainer = document.createElement('div');
+                        const label = document.createElement('label');
+                        label.textContent = `${ui.label}: `;
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.className = 'data-text';
+                        input.dataset.key = ui.data_key;
+                        input.readOnly = true;
+                        textContainer.appendChild(label);
+                        textContainer.appendChild(input);
+                        textContainer.appendChild(document.createElement('br'));
+                        div.appendChild(textContainer);
                     } else if (ui.type === 'slider') {
                         const sliderContainer = document.createElement('div');
                         const label = document.createElement('label');
@@ -182,15 +226,36 @@
         function showConfigForm(conn) {
             const form = document.createElement('div');
             form.className = 'config-form';
+            const hasReadInterval = conn.read_interval !== undefined;
+            const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
             form.innerHTML = `
                 <p>Address: ${conn.address}</p>
                 <label>Name: <input type="text" id="name" value="${conn.name}"></label><br>
                 <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label><br>
                 <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label><br>
                 <label>UI Components (JSON): <textarea id="ui_components">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
+                <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
                 <button onclick="saveConfig('${conn.address}')">Save</button>
             `;
             document.body.appendChild(form);
+
+            // Dynamically show/hide read_interval based on interface_module
+            const interfaceModuleInput = document.getElementById('interface_module');
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            interfaceModuleInput.addEventListener('input', () => {
+                const module = interfaceModuleInput.value;
+                const existingConn = [
+                    ...config.connections,
+                    ...config.new_connections,
+                    ...config.archived_connections
+                ].find(c => c.interface_module === module);
+                if (existingConn && existingConn.read_interval !== undefined) {
+                    readIntervalLabel.classList.remove('hidden');
+                    document.getElementById('read_interval').value = existingConn.read_interval || 0.1;
+                } else {
+                    readIntervalLabel.classList.add('hidden');
+                }
+            });
         }
 
         function saveConfig(address) {
@@ -202,6 +267,15 @@
                 ui_components: JSON.parse(document.getElementById('ui_components').value || '[]'),
                 active: config.connections.some(c => c.address === address) ? 1 : 0
             };
+
+            // Include read_interval only if the field is visible
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            if (!readIntervalLabel.classList.contains('hidden')) {
+                const readInterval = parseFloat(document.getElementById('read_interval').value);
+                if (!isNaN(readInterval) && readInterval >= 0) {
+                    updatedConn.read_interval = readInterval;
+                }
+            }
 
             let section = 'connections';
             if (config.new_connections.some(c => c.address === address)) {
