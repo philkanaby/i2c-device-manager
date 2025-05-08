@@ -105,6 +105,7 @@ def update_device_status():
                 config['connections'].remove(conn)
                 if conn['address'] in device_instances:
                     del device_instances[conn['address']]
+                logger.info(f"Archived device {conn['address']} ({conn['name']})")
         
         # Check archived connections
         for conn in config['archived_connections'][:]:
@@ -113,6 +114,13 @@ def update_device_status():
                 config['connections'].append(conn)
                 config['archived_connections'].remove(conn)
                 initialize_device(conn)
+                logger.info(f"Restored device {conn['address']} ({conn['name']}) from archived")
+        
+        # Clean up new_connections to avoid duplicates
+        config['new_connections'] = [
+            conn for conn in config['new_connections']
+            if conn['address'] not in {c['address'] for c in config['connections'] + config['archived_connections']}
+        ]
         
         # Detect new devices
         known_addresses = {conn['address'] for conn in config['connections'] + config['archived_connections']}
@@ -125,6 +133,7 @@ def update_device_status():
                     "name": "Unknown Device",
                     "active": 0
                 })
+                logger.info(f"Detected new device at {addr}")
         
         save_config()
         socketio.emit('config_update', config)
@@ -149,20 +158,6 @@ def initialize_device(conn):
         except Exception as e:
             logger.info(f"Error initializing device {conn['address']}: {e}")
 
-#def read_device_data():
-#    while True:
-#        for conn in config['connections']:
-#            if conn.get('active') and 'read_function' in conn:
-#                try:
-#                    func = getattr(device_interfaces, conn['read_function'])
-#                    data = func(device_instances[conn['address']])
-#                    socketio.emit('device_data', {'address': conn['address'], 'data': data})
-#                except Exception as e:
-#                    print(f"Error reading device {conn['address']}: {e}")
-#                    conn['active'] = 0
-#                    save_config()
-#        eventlet.sleep(0.1)  # Use eventlet.sleep for non-blocking sleep
-
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -175,7 +170,45 @@ def handle_connect():
 @socketio.on('update_config')
 def handle_update_config(updated_config):
     global config
-    config = updated_config
+    # Deduplicate the received configuration
+    deduped_config = {
+        "connections": [],
+        "new_connections": [],
+        "archived_connections": []
+    }
+    
+    # Collect all connections
+    all_conns = (
+        updated_config.get('connections', []) +
+        updated_config.get('new_connections', []) +
+        updated_config.get('archived_connections', [])
+    )
+    
+    # Deduplicate by address
+    address_map = {}
+    for conn in all_conns:
+        addr = conn['address']
+        if addr not in address_map:
+            address_map[addr] = conn
+        else:
+            # Prioritize connections with interface_module and specific name
+            existing = address_map[addr]
+            if 'interface_module' in conn and conn['interface_module'] and ('interface_module' not in existing or not existing['interface_module']):
+                address_map[addr] = conn
+            elif 'name' in conn and conn['name'] != "Unknown Device" and ('name' not in existing or existing['name'] == "Unknown Device"):
+                address_map[addr] = conn
+        logger.info(f"Deduplicating: Keeping {conn['address']} with name {conn['name']}")
+
+    # Rebuild config
+    for addr, conn in address_map.items():
+        if conn.get('active', 0) == 1:
+            deduped_config['connections'].append(conn)
+        elif any(c['address'] == addr for c in updated_config['new_connections']):
+            deduped_config['new_connections'].append(conn)
+        else:
+            deduped_config['archived_connections'].append(conn)
+
+    config = deduped_config
     save_config()
     for conn in config['connections']:
         if conn['active'] and conn['address'] not in device_instances:
@@ -236,7 +269,6 @@ if __name__ == '__main__':
     # Start background tasks using eventlet's GreenPool
     pool = eventlet.GreenPool()
     pool.spawn(update_device_status)
-    #pool.spawn(read_device_data) #replaced by manage_reading_tasks()
     
     # Run the app using eventlet's WSGI server
     eventlet.wsgi.server(eventlet.listen(('', 5000)), app)
