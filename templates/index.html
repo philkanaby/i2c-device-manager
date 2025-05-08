@@ -29,9 +29,6 @@
         let prevConfig = { connections: [], new_connections: [], archived_connections: [] };
         let pendingDataEvents = [];
 
-        // Define which interface modules require read_interval
-        const readIntervalModules = ['icm20948'];
-
         socket.on('connect', () => {
             console.log('Connected to server');
         });
@@ -229,24 +226,32 @@
         function showConfigForm(conn) {
             const form = document.createElement('div');
             form.className = 'config-form';
-            const readIntervalStyle = readIntervalModules.includes(conn.interface_module) ? '' : 'class="hidden"';
+            const hasReadInterval = conn.read_interval !== undefined;
+            const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
             form.innerHTML = `
                 <p>Address: ${conn.address}</p>
                 <label>Name: <input type="text" id="name" value="${conn.name}"></label><br>
                 <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label><br>
                 <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label><br>
                 <label>UI Components (JSON): <textarea id="ui_components">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
-                <label ${readIntervalStyle}>Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
+                <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
                 <button onclick="saveConfig('${conn.address}')">Save</button>
             `;
             document.body.appendChild(form);
 
-            // Dynamically show/hide read_interval based on interface_module changes
+            // Dynamically show/hide read_interval based on interface_module
             const interfaceModuleInput = document.getElementById('interface_module');
-            const readIntervalLabel = document.querySelector('label[for="read_interval"]') || form.querySelector('label:has(#read_interval)');
+            const readIntervalLabel = document.getElementById('read_interval_label');
             interfaceModuleInput.addEventListener('input', () => {
-                if (readIntervalModules.includes(interfaceModuleInput.value)) {
+                const module = interfaceModuleInput.value;
+                const existingConn = [
+                    ...config.connections,
+                    ...config.new_connections,
+                    ...config.archived_connections
+                ].find(c => c.interface_module === module);
+                if (existingConn && existingConn.read_interval !== undefined) {
                     readIntervalLabel.classList.remove('hidden');
+                    document.getElementById('read_interval').value = existingConn.read_interval || 0.1;
                 } else {
                     readIntervalLabel.classList.add('hidden');
                 }
@@ -254,18 +259,18 @@
         }
 
         function saveConfig(address) {
-            const interfaceModule = document.getElementById('interface_module').value;
             const updatedConn = {
                 address,
                 name: document.getElementById('name').value,
-                interface_module: interfaceModule,
+                interface_module: document.getElementById('interface_module').value,
                 interface_class: document.getElementById('interface_class').value,
                 ui_components: JSON.parse(document.getElementById('ui_components').value || '[]'),
                 active: config.connections.some(c => c.address === address) ? 1 : 0
             };
 
-            // Include read_interval only for modules that require it
-            if (readIntervalModules.includes(interfaceModule)) {
+            // Include read_interval only if the field is visible
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            if (!readIntervalLabel.classList.contains('hidden')) {
                 const readInterval = parseFloat(document.getElementById('read_interval').value);
                 if (!isNaN(readInterval) && readInterval >= 0) {
                     updatedConn.read_interval = readInterval;
