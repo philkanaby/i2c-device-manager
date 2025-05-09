@@ -34,6 +34,7 @@
         });
 
         socket.on('config_update', (data) => {
+            console.log('Received config_update:', data);
             updateUI(data);
             prevConfig = JSON.parse(JSON.stringify(config));
             config = data;
@@ -49,6 +50,25 @@
                 return;
             }
             handleDeviceData(data);
+        });
+
+        socket.on('interface_code', (data) => {
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            const interfaceCodeTextarea = document.getElementById('interface_code');
+            if (interfaceCodeTextarea) {
+                interfaceCodeTextarea.value = data.code;
+            }
+        });
+
+        socket.on('save_status', (data) => {
+            if (data.status === 'success') {
+                alert(`Interface ${data.module_name} saved successfully.`);
+            } else {
+                alert(`Error saving interface: ${data.error}`);
+            }
         });
 
         function processPendingDataEvents() {
@@ -112,59 +132,21 @@
             const newDiv = document.getElementById('new-devices');
             const archivedDiv = document.getElementById('archived-devices');
 
-            function updateSection(section, oldConns, newConns, container) {
-                const oldMap = new Map(oldConns.map(conn => [conn.address, conn]));
-                const newMap = new Map(newConns.map(conn => [conn.address, conn]));
+            activeDiv.innerHTML = '';
+            newDiv.innerHTML = '';
+            archivedDiv.innerHTML = '';
 
-                Array.from(container.children).forEach(child => {
-                    const addr = child.id.replace('device-', '');
-                    if (!newMap.has(addr)) {
-                        child.remove();
-                    }
-                });
-
-                newConns.forEach(newConn => {
-                    const oldConn = oldMap.get(newConn.address);
-                    const isActive = section === 'connections';
-                    const deviceDiv = document.getElementById(`device-${newConn.address}`);
-
-                    if (!oldConn || !deepEqual(oldConn, newConn)) {
-                        const sliderValues = new Map();
-                        if (deviceDiv && newConn.ui_components) {
-                            newConn.ui_components.forEach(ui => {
-                                if (ui.type === 'slider') {
-                                    const slider = deviceDiv.querySelector(`input[data-channel="${ui.channel}"]`);
-                                    if (slider) {
-                                        sliderValues.set(ui.channel, slider.value);
-                                    }
-                                }
-                            });
-                        }
-
-                        const newDiv = createDeviceDiv(newConn, isActive);
-                        if (deviceDiv) {
-                            container.replaceChild(newDiv, deviceDiv);
-                        } else {
-                            container.appendChild(newDiv);
-                        }
-
-                        if (newConn.ui_components) {
-                            newConn.ui_components.forEach(ui => {
-                                if (ui.type === 'slider' && sliderValues.has(ui.channel)) {
-                                    const slider = newDiv.querySelector(`input[data-channel="${ui.channel}"]`);
-                                    if (slider) {
-                                        slider.value = sliderValues.get(ui.channel);
-                                    }
-                                }
-                            });
-                        }
-                    }
+            function updateSection(section, newConns, container, isActiveSection) {
+                newConns.forEach(conn => {
+                    const deviceDiv = createDeviceDiv(conn, isActiveSection && conn.active === 1);
+                    console.log(`Placing device ${conn.address} (${conn.name}) in ${isActiveSection ? 'Active' : section === 'new_connections' ? 'New' : 'Archived'} Devices, active: ${conn.active}`);
+                    container.appendChild(deviceDiv);
                 });
             }
 
-            updateSection('connections', prevConfig.connections, newConfig.connections, activeDiv);
-            updateSection('new_connections', prevConfig.new_connections, newConfig.new_connections, newDiv);
-            updateSection('archived_connections', prevConfig.archived_connections, newConfig.archived_connections, archivedDiv);
+            updateSection('connections', newConfig.connections, activeDiv, true);
+            updateSection('new_connections', newConfig.new_connections, newDiv, false);
+            updateSection('archived_connections', newConfig.archived_connections, archivedDiv, false);
         }
 
         function createDeviceDiv(conn, isActive) {
@@ -226,35 +208,23 @@
         function showConfigForm(conn) {
             const form = document.createElement('div');
             form.className = 'config-form';
-            const hasReadInterval = conn.read_interval !== undefined;
-            const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
             form.innerHTML = `
                 <p>Address: ${conn.address}</p>
                 <label>Name: <input type="text" id="name" value="${conn.name}"></label><br>
                 <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label><br>
                 <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label><br>
-                <label>UI Components (JSON): <textarea id="ui_components">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
-                <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
+                <label>UI Components (JSON): <textarea id="ui_components" rows="10" cols="50">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
+                <label>Interface Code: <textarea id="interface_code" rows="20" cols="50"></textarea></label><br>
                 <button onclick="saveConfig('${conn.address}')">Save</button>
             `;
             document.body.appendChild(form);
 
-            // Dynamically show/hide read_interval based on interface_module
             const interfaceModuleInput = document.getElementById('interface_module');
-            const readIntervalLabel = document.getElementById('read_interval_label');
-            interfaceModuleInput.addEventListener('input', () => {
-                const module = interfaceModuleInput.value;
-                const existingConn = [
-                    ...config.connections,
-                    ...config.new_connections,
-                    ...config.archived_connections
-                ].find(c => c.interface_module === module);
-                if (existingConn && existingConn.read_interval !== undefined) {
-                    readIntervalLabel.classList.remove('hidden');
-                    document.getElementById('read_interval').value = existingConn.read_interval || 0.1;
-                } else {
-                    readIntervalLabel.classList.add('hidden');
-                }
+            const interfaceCodeTextarea = document.getElementById('interface_code');
+            socket.emit('get_interface_code', interfaceModuleInput.value);
+
+            interfaceModuleInput.addEventListener('change', () => {
+                socket.emit('get_interface_code', interfaceModuleInput.value);
             });
         }
 
@@ -264,17 +234,15 @@
                 name: document.getElementById('name').value,
                 interface_module: document.getElementById('interface_module').value,
                 interface_class: document.getElementById('interface_class').value,
-                ui_components: JSON.parse(document.getElementById('ui_components').value || '[]'),
-                active: config.connections.some(c => c.address === address) ? 1 : 0
+                ui_components: JSON.parse(document.getElementById('ui_components').value || '[]')
             };
 
-            // Include read_interval only if the field is visible
-            const readIntervalLabel = document.getElementById('read_interval_label');
-            if (!readIntervalLabel.classList.contains('hidden')) {
-                const readInterval = parseFloat(document.getElementById('read_interval').value);
-                if (!isNaN(readInterval) && readInterval >= 0) {
-                    updatedConn.read_interval = readInterval;
-                }
+            const interfaceCode = document.getElementById('interface_code').value;
+            if (interfaceCode) {
+                socket.emit('save_interface_code', {
+                    module_name: updatedConn.interface_module,
+                    code: interfaceCode
+                });
             }
 
             let section = 'connections';
