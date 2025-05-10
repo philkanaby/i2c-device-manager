@@ -208,6 +208,8 @@
         function showConfigForm(conn) {
             const form = document.createElement('div');
             form.className = 'config-form';
+            const hasReadInterval = conn.read_interval !== undefined;
+            const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
             form.innerHTML = `
                 <p>Address: ${conn.address}</p>
                 <label>Name: <input type="text" id="name" value="${conn.name}"></label><br>
@@ -215,6 +217,7 @@
                 <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label><br>
                 <label>UI Components (JSON): <textarea id="ui_components" rows="10" cols="50">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
                 <label>Interface Code: <textarea id="interface_code" rows="20" cols="50"></textarea></label><br>
+                <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
                 <button onclick="saveConfig('${conn.address}')">Save</button>
             `;
             document.body.appendChild(form);
@@ -226,6 +229,22 @@
             interfaceModuleInput.addEventListener('change', () => {
                 socket.emit('get_interface_code', interfaceModuleInput.value);
             });
+
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            interfaceModuleInput.addEventListener('input', () => {
+                const module = interfaceModuleInput.value;
+                const existingConn = [
+                    ...config.connections,
+                    ...config.new_connections,
+                    ...config.archived_connections
+                ].find(c => c.interface_module === module);
+                if (existingConn && existingConn.read_interval !== undefined) {
+                    readIntervalLabel.classList.remove('hidden');
+                    document.getElementById('read_interval').value = existingConn.read_interval || 0.1;
+                } else {
+                    readIntervalLabel.classList.add('hidden');
+                }
+            });
         }
 
         function saveConfig(address) {
@@ -234,7 +253,8 @@
                 name: document.getElementById('name').value,
                 interface_module: document.getElementById('interface_module').value,
                 interface_class: document.getElementById('interface_class').value,
-                ui_components: JSON.parse(document.getElementById('ui_components').value || '[]')
+                ui_components: JSON.parse(document.getElementById('ui_components').value || '[]'),
+                active: config.connections.some(c => c.address === address) ? 1 : 0
             };
 
             const interfaceCode = document.getElementById('interface_code').value;
@@ -243,6 +263,14 @@
                     module_name: updatedConn.interface_module,
                     code: interfaceCode
                 });
+            }
+
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            if (!readIntervalLabel.classList.contains('hidden')) {
+                const readInterval = parseFloat(document.getElementById('read_interval').value);
+                if (!isNaN(readInterval) && readInterval >= 0) {
+                    updatedConn.read_interval = readInterval;
+                }
             }
 
             let section = 'connections';
@@ -266,5 +294,5 @@
             document.querySelector('.config-form').remove();
         }
     </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'93d206aadad5afa1',t:'MTc0NjgwMjQwMy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
