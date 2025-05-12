@@ -240,11 +240,18 @@ def handle_list_interfaces():
     emit('interface_list', interfaces)
 
 @socketio.on('get_interface_code')
-def handle_get_interface_code(module_name):
+def handle_get_interface_code(module_name):# Check if module_name is empty or not provided
+    if not module_name or module_name.strip() == '':
+        emit('interface_code', {'error': 'No module name provided'})
+        return
+    
+    # Try to read the file if a valid module_name is given
     try:
         with open(f'interfaces/{module_name}.py', 'r') as f:
             code = f.read()
         emit('interface_code', {'module_name': module_name, 'code': code})
+    except FileNotFoundError:
+        emit('interface_code', {'error': f'File not found: interfaces/{module_name}.py'})
     except Exception as e:
         emit('interface_code', {'error': str(e)})
 
