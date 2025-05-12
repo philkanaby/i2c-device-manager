@@ -123,7 +123,7 @@ def update_device_status():
         ]
         
         # Detect new devices
-        known_addresses = {conn['address'] for conn in config['connections'] + config['archived_connections']}
+        known_addresses = {conn['address'] for conn in config['connections'] + config['new_connections'] + config['archived_connections']}
         for addr in current_devices:
             if addr not in known_addresses:
                 config['new_connections'].append({
