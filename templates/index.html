@@ -34,7 +34,7 @@
         });
 
         socket.on('config_update', (data) => {
-            console.log('Received config_update:', data);
+            //console.log('Received config_update:', data);
             updateUI(data);
             prevConfig = JSON.parse(JSON.stringify(config));
             config = data;
@@ -42,7 +42,7 @@
         });
 
         socket.on('device_data', (data) => {
-            console.log('Received device_data:', data);
+            //console.log('Received device_data:', data);
             const deviceDiv = document.getElementById(`device-${data.address}`);
             if (!deviceDiv) {
                 console.warn(`No device div found for address ${data.address}, queuing event`);
@@ -100,7 +100,7 @@
                 if (el.dataset.key && validKeys.includes(el.dataset.key)) {
                     const value = data.data[el.dataset.key];
                     el.value = value !== undefined && value !== null ? value : 'N/A';
-                    console.log(`Setting ${el.dataset.key} to ${el.value} for device ${data.address}`);
+                    //console.log(`Setting ${el.dataset.key} to ${el.value} for device ${data.address}`);
                 } else {
                     console.warn(`Invalid or unknown data_key ${el.dataset.key} for device ${data.address}`);
                 }
