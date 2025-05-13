@@ -128,25 +128,25 @@
         }
 
         function updateUI(newConfig) {
-            const activeDiv = document.getElementById('active-devices');
-            const newDiv = document.getElementById('new-devices');
-            const archivedDiv = document.getElementById('archived-devices');
-
-            activeDiv.innerHTML = '';
-            newDiv.innerHTML = '';
-            archivedDiv.innerHTML = '';
-
-            function updateSection(section, newConns, container, isActiveSection) {
-                newConns.forEach(conn => {
-                    const deviceDiv = createDeviceDiv(conn, isActiveSection && conn.active === 1);
-                    console.log(`Placing device ${conn.address} (${conn.name}) in ${isActiveSection ? 'Active' : section === 'new_connections' ? 'New' : 'Archived'} Devices, active: ${conn.active}`);
-                    container.appendChild(deviceDiv);
-                });
+            if (deepEqual(newConfig, config)) {
+                console.log('Configuration unchanged, skipping UI update');
+                return;
             }
+            console.log('Configuration changed, updating UI');
 
-            updateSection('connections', newConfig.connections, activeDiv, true);
-            updateSection('new_connections', newConfig.new_connections, newDiv, false);
-            updateSection('archived_connections', newConfig.archived_connections, archivedDiv, false);
+            updateSection('active-devices', newConfig.connections.filter(conn => conn.active), true);
+            updateSection('new-devices', newConfig.connections.filter(conn => !conn.active && conn.section === 'new_connections'));
+            updateSection('archived-devices', newConfig.connections.filter(conn => !conn.active && conn.section === 'archived'));
+        }
+
+        // Update a specific section
+        function updateSection(sectionId, connections, isActiveSection = false) {
+            const sectionDiv = document.getElementById(sectionId);
+            sectionDiv.innerHTML = ''; // Clear existing content
+            connections.forEach(conn => {
+                console.log(`Placing device ${conn.address} (${conn.name}) in ${isActiveSection ? 'Active' : sectionId === 'new-devices' ? 'New' : 'Archived'} Devices, active: ${conn.active}`);
+                sectionDiv.appendChild(createDeviceDiv(conn, isActiveSection));
+            });
         }
 
         function createDeviceDiv(conn, isActive) {
@@ -306,5 +306,4 @@
             document.querySelector('.config-form').remove();
         }
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'93d206aadad5afa1',t:'MTc0NjgwMjQwMy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
