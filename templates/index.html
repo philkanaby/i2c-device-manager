@@ -224,10 +224,21 @@
 
             const interfaceModuleInput = document.getElementById('interface_module');
             const interfaceCodeTextarea = document.getElementById('interface_code');
-            socket.emit('get_interface_code', interfaceModuleInput.value);
+            
+            // Load code only if a module name exists
+            if (interfaceModuleInput.value) {
+                socket.emit('get_interface_code', interfaceModuleInput.value);
+            } else {
+                interfaceCodeTextarea.value = '// Enter module name and save to load code';
+            }
 
             interfaceModuleInput.addEventListener('change', () => {
-                socket.emit('get_interface_code', interfaceModuleInput.value);
+                const moduleName = interfaceModuleInput.value;
+                if (moduleName) {
+                    socket.emit('get_interface_code', moduleName);
+                } else {
+                    interfaceCodeTextarea.value = '// Enter module name and save to load code';
+                }
             });
 
             const readIntervalLabel = document.getElementById('read_interval_label');
@@ -258,7 +269,8 @@
             };
 
             const interfaceCode = document.getElementById('interface_code').value;
-            if (interfaceCode) {
+            const moduleName = document.getElementById('interface_module').value;
+            if (moduleName && interfaceCode) {
                 socket.emit('save_interface_code', {
                     module_name: updatedConn.interface_module,
                     code: interfaceCode
