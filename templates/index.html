@@ -2,43 +2,124 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>I2C Device Manager</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; }
-        .section { margin: 20px 0; }
-        .device { border: 1px solid #ccc; padding: 10px; margin: 5px 0; }
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .device { border: 1px solid #ccc; padding: 10px; margin: 10px 0; }
+        .config-form { margin-top: 10px; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
     <h1>I2C Device Manager</h1>
-
-    <div class="section">
-        <h2>Active Devices</h2>
-        <div id="active-devices"></div>
-    </div>
-
-    <div class="section">
-        <h2>New Devices</h2>
-        <div id="new-devices"></div>
-    </div>
-
-    <div class="section">
-        <h2>Archived Devices</h2>
-        <div id="archived-devices"></div>
-    </div>
+    
+    <h2>Active Devices</h2>
+    <div id="active-devices"></div>
+    
+    <h2>New Devices</h2>
+    <div id="new-devices"></div>
+    
+    <h2>Archived Devices</h2>
+    <div id="archived-devices"></div>
 
     <script>
-        // Assume socket is initialized elsewhere, e.g., via Socket.IO
-        const socket = io(); // Placeholder for actual socket initialization
-        let config = {};
-        let prevConfig = {};
+        const socket = io();
+        let config = { connections: [], new_connections: [], archived_connections: [] };
+        let prevConfig = { connections: [], new_connections: [], archived_connections: [] };
+        let pendingDataEvents = [];
 
-        // Deep equality comparison function
+        socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+
+        socket.on('config_update', (data) => {
+            //console.log('Received config_update:', data);
+            updateUI(data);
+            prevConfig = JSON.parse(JSON.stringify(config));
+            config = data;
+            processPendingDataEvents();
+        });
+
+        socket.on('device_data', (data) => {
+            //console.log('Received device_data:', data);
+            const deviceDiv = document.getElementById(`device-${data.address}`);
+            if (!deviceDiv) {
+                console.warn(`No device div found for address ${data.address}, queuing event`);
+                pendingDataEvents.push(data);
+                return;
+            }
+            handleDeviceData(data);
+        });
+
+        socket.on('interface_code', (data) => {
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            const interfaceCodeTextarea = document.getElementById('interface_code');
+            if (interfaceCodeTextarea) {
+                interfaceCodeTextarea.value = data.code;
+            }
+        });
+
+        socket.on('save_status', (data) => {
+            if (data.status === 'success') {
+                alert(`Interface ${data.module_name} saved successfully.`);
+            } else {
+                alert(`Error saving interface: ${data.error}`);
+            }
+        });
+
+        function processPendingDataEvents() {
+            const remainingEvents = [];
+            pendingDataEvents.forEach(data => {
+                const deviceDiv = document.getElementById(`device-${data.address}`);
+                if (deviceDiv) {
+                    handleDeviceData(data);
+                } else {
+                    remainingEvents.push(data);
+                }
+            });
+            pendingDataEvents = remainingEvents;
+        }
+
+        function handleDeviceData(data) {
+            const deviceDiv = document.getElementById(`device-${data.address}`);
+            const textElements = deviceDiv.querySelectorAll('.data-text');
+            if (textElements.length === 0) {
+                console.warn(`No text elements found for device ${data.address}`);
+                return;
+            }
+            if (!data.data || typeof data.data !== 'object') {
+                console.warn(`Invalid data structure for device ${data.address}:`, data.data);
+                return;
+            }
+            const validKeys = getValidDataKeys(data.address);
+            textElements.forEach(el => {
+                if (el.dataset.key && validKeys.includes(el.dataset.key)) {
+                    const value = data.data[el.dataset.key];
+                    el.value = value !== undefined && value !== null ? value : 'N/A';
+                    //console.log(`Setting ${el.dataset.key} to ${el.value} for device ${data.address}`);
+                } else {
+                    console.warn(`Invalid or unknown data_key ${el.dataset.key} for device ${data.address}`);
+                }
+            });
+        }
+
+        function getValidDataKeys(address) {
+            const conn = config.connections.find(c => c.address === address);
+            if (!conn || !conn.ui_components) return [];
+            return conn.ui_components
+                .filter(ui => ui.type === 'text' && ui.data_key)
+                .map(ui => ui.data_key);
+        }
+
         function deepEqual(obj1, obj2) {
             if (obj1 === obj2) return true;
             if (typeof obj1 !== 'object' || typeof obj2 !== 'object' || obj1 == null || obj2 == null) return false;
-            let keys1 = Object.keys(obj1), keys2 = Object.keys(obj2);
+            let keys1 = Object.keys(obj1);
+            let keys2 = Object.keys(obj2);
             if (keys1.length !== keys2.length) return false;
             for (let key of keys1) {
                 if (!keys2.includes(key) || !deepEqual(obj1[key], obj2[key])) return false;
@@ -46,7 +127,6 @@
             return true;
         }
 
-        // Update UI based on new configuration
         function updateUI(newConfig) {
             if (deepEqual(newConfig, config)) {
                 console.log('Configuration unchanged, skipping UI update');
@@ -69,27 +149,161 @@
             });
         }
 
-        // Create a device div (simplified version)
         function createDeviceDiv(conn, isActive) {
             const div = document.createElement('div');
             div.className = 'device';
-            div.textContent = `${conn.name} (${conn.address})`;
+            div.id = `device-${conn.address}`;
+            div.innerHTML = `<h3>${conn.name} (${conn.address})</h3>`;
+            
             if (isActive && conn.ui_components) {
-                // Add UI components like sliders or inputs here if needed
+                conn.ui_components.forEach(ui => {
+                    if (ui.type === 'text') {
+                        const textContainer = document.createElement('div');
+                        const label = document.createElement('label');
+                        label.textContent = `${ui.label}: `;
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.className = 'data-text';
+                        input.dataset.key = ui.data_key;
+                        input.readOnly = true;
+                        textContainer.appendChild(label);
+                        textContainer.appendChild(input);
+                        textContainer.appendChild(document.createElement('br'));
+                        div.appendChild(textContainer);
+                    } else if (ui.type === 'slider') {
+                        const sliderContainer = document.createElement('div');
+                        const label = document.createElement('label');
+                        label.textContent = `${ui.label}: `;
+                        const slider = document.createElement('input');
+                        slider.type = 'range';
+                        slider.min = ui.min;
+                        slider.max = ui.max;
+                        slider.value = ui.initial_value !== undefined ? ui.initial_value : 90;
+                        slider.dataset.channel = ui.channel;
+                        slider.oninput = () => {
+                            const data = {
+                                address: conn.address,
+                                value: parseInt(slider.value),
+                                channel: parseInt(ui.channel)
+                            };
+                            console.log(`Emitting write_device for channel ${ui.channel}:`, data);
+                            socket.emit('write_device', data);
+                        };
+                        sliderContainer.appendChild(label);
+                        sliderContainer.appendChild(slider);
+                        sliderContainer.appendChild(document.createElement('br'));
+                        div.appendChild(sliderContainer);
+                    }
+                });
             }
+
+            const configBtn = document.createElement('button');
+            configBtn.textContent = 'Configure';
+            configBtn.onclick = () => showConfigForm(conn);
+            div.appendChild(configBtn);
+
             return div;
         }
 
-        // Handle config updates from the server
-        socket.on('config_update', (data) => {
-            console.log('Received config_update:', data);
-            updateUI(data);
-            prevConfig = JSON.parse(JSON.stringify(config));
-            config = data;
-            // Assume processPendingDataEvents() exists elsewhere if needed
-        });
+        function showConfigForm(conn) {
+            const form = document.createElement('div');
+            form.className = 'config-form';
+            const hasReadInterval = conn.read_interval !== undefined;
+            const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
+            form.innerHTML = `
+                <p>Address: ${conn.address}</p>
+                <label>Name: <input type="text" id="name" value="${conn.name}"></label><br>
+                <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label><br>
+                <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label><br>
+                <label>UI Components (JSON): <textarea id="ui_components" rows="10" cols="50">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
+                <label>Interface Code: <textarea id="interface_code" rows="20" cols="50"></textarea></label><br>
+                <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
+                <button onclick="saveConfig('${conn.address}')">Save</button>
+            `;
+            document.body.appendChild(form);
 
-        // Placeholder for other functions like processPendingDataEvents if required
+            const interfaceModuleInput = document.getElementById('interface_module');
+            const interfaceCodeTextarea = document.getElementById('interface_code');
+            
+            // Load code only if a module name exists
+            if (interfaceModuleInput.value) {
+                socket.emit('get_interface_code', interfaceModuleInput.value);
+            } else {
+                interfaceCodeTextarea.value = '// Enter module name and save to load code';
+            }
+
+            interfaceModuleInput.addEventListener('change', () => {
+                const moduleName = interfaceModuleInput.value;
+                if (moduleName) {
+                    socket.emit('get_interface_code', moduleName);
+                } else {
+                    interfaceCodeTextarea.value = '// Enter module name and save to load code';
+                }
+            });
+
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            interfaceModuleInput.addEventListener('input', () => {
+                const module = interfaceModuleInput.value;
+                const existingConn = [
+                    ...config.connections,
+                    ...config.new_connections,
+                    ...config.archived_connections
+                ].find(c => c.interface_module === module);
+                if (existingConn && existingConn.read_interval !== undefined) {
+                    readIntervalLabel.classList.remove('hidden');
+                    document.getElementById('read_interval').value = existingConn.read_interval || 0.1;
+                } else {
+                    readIntervalLabel.classList.add('hidden');
+                }
+            });
+        }
+
+        function saveConfig(address) {
+            const updatedConn = {
+                address,
+                name: document.getElementById('name').value,
+                interface_module: document.getElementById('interface_module').value,
+                interface_class: document.getElementById('interface_class').value,
+                ui_components: JSON.parse(document.getElementById('ui_components').value || '[]'),
+                active: config.connections.some(c => c.address === address) ? 1 : 0
+            };
+
+            const interfaceCode = document.getElementById('interface_code').value;
+            const moduleName = document.getElementById('interface_module').value;
+            if (moduleName && interfaceCode) {
+                socket.emit('save_interface_code', {
+                    module_name: updatedConn.interface_module,
+                    code: interfaceCode
+                });
+            }
+
+            const readIntervalLabel = document.getElementById('read_interval_label');
+            if (!readIntervalLabel.classList.contains('hidden')) {
+                const readInterval = parseFloat(document.getElementById('read_interval').value);
+                if (!isNaN(readInterval) && readInterval >= 0) {
+                    updatedConn.read_interval = readInterval;
+                }
+            }
+
+            let section = 'connections';
+            if (config.new_connections.some(c => c.address === address)) {
+                section = 'new_connections';
+                updatedConn.active = 1;
+            } else if (config.archived_connections.some(c => c.address === address)) {
+                section = 'archived_connections';
+            }
+
+            const index = config[section].findIndex(c => c.address === address);
+            if (index !== -1) {
+                config[section][index] = updatedConn;
+                if (section === 'new_connections') {
+                    config.connections.push(updatedConn);
+                    config.new_connections.splice(index, 1);
+                }
+            }
+
+            socket.emit('update_config', config);
+            document.querySelector('.config-form').remove();
+        }
     </script>
-</body>
 </html>
