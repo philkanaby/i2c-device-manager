@@ -275,21 +275,23 @@
         }
 
         function showConfigForm(conn) {
-            const form = document.createElement('div');
-            form.className = 'config-form';
+            const popover = document.getElementById('popover');
+            const popoverContent = document.getElementById('popover-content');
             const hasReadInterval = conn.read_interval !== undefined;
             const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
-            form.innerHTML = `
+            popoverContent.innerHTML = `
+                <h2>Configure Device</h2>
                 <p>Address: ${conn.address}</p>
-                <label>Name: <input type="text" id="name" value="${conn.name}"></label><br>
-                <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label><br>
-                <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label><br>
-                <label>UI Components (JSON): <textarea id="ui_components" rows="10" cols="50">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label><br>
+                <label>Name: <input type="text" id="name" value="${conn.name}"></label>
+                <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label>
+                <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label>
+                <label>UI Components (JSON): <textarea id="ui_components">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label>
                 <label>Interface Code: <textarea id="interface_code" rows="20" cols="50"></textarea></label><br>
                 <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
-                <button onclick="saveConfig('${conn.address}')">Save</button>
+                <button type="button" class="save" onclick="saveConfig('${conn.address}')">Save</button>
+                <button type="button" class="cancel" onclick="closePopover()">Cancel</button>
             `;
-            document.body.appendChild(form);
+            popover.classList.remove('hidden');
 
             const interfaceModuleInput = document.getElementById('interface_module');
             const interfaceCodeTextarea = document.getElementById('interface_code');
@@ -325,6 +327,11 @@
                     readIntervalLabel.classList.add('hidden');
                 }
             });
+        }
+
+        function closePopover() {
+            const popover = document.getElementById('popover');
+            popover.classList.add('hidden');
         }
 
         function saveConfig(address) {
@@ -372,7 +379,7 @@
             }
 
             socket.emit('update_config', config);
-            document.querySelector('.config-form').remove();
+            closePopover();
         }
     </script>
 </html>
