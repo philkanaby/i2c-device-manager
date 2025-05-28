@@ -7,8 +7,7 @@
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         .device { border: 1px solid #ccc; padding: 10px; margin: 10px 0; }
-        .config-form { margin-top: 10px; }
-        .hidden { display: none !important; }
+        .hidden { display: none; }
 
         /* Popover styles */
         #popover {
@@ -53,7 +52,7 @@
             resize: vertical;
         }
         #popover-content button {
-            margin-top: 10px;
+            margin-top: 8px;
             padding: 10px 20px;
             border: none;
             border-radius: 4px;
@@ -70,6 +69,36 @@
         }
         #popover-content button:hover {
             opacity: 0.9;
+        }
+        .interface-code-container {
+            position: relative;
+            margin-top: 5px;
+        }
+        #ai_code_button {
+            background-color: #2196F3;
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        #save_code_button {
+            background-color: #FFC107;
+            color: black;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        #loading_indicator {
+            color: #666;
+            margin-top: 5px;
+        }
+        #error_message {
+            margin-top: 5px;
+            color: red;
         }
     </style>
 </head>
@@ -99,11 +128,11 @@
         let pendingDataEvents = [];
 
         socket.on('connect', () => {
-            //console.log('Connected to server');
+            console.log('Connected to server');
         });
 
         socket.on('config_update', (data) => {
-            //console.log('Received config_update:', data);
+            console.log('Received config_update:', data);
             updateUI(data);
             prevConfig = JSON.parse(JSON.stringify(config));
             config = data;
@@ -111,7 +140,7 @@
         });
 
         socket.on('device_data', (data) => {
-            //console.log('Received device_data:', data);
+            console.log('Received device_data:', data);
             const deviceDiv = document.getElementById(`device-${data.address}`);
             if (!deviceDiv) {
                 console.warn(`No device div found for address ${data.address}, queuing event`);
@@ -119,25 +148,6 @@
                 return;
             }
             handleDeviceData(data);
-        });
-
-        socket.on('interface_code', (data) => {
-            if (data.error) {
-                alert(data.error);
-                return;
-            }
-            const interfaceCodeTextarea = document.getElementById('interface_code');
-            if (interfaceCodeTextarea) {
-                interfaceCodeTextarea.value = data.code;
-            }
-        });
-
-        socket.on('save_status', (data) => {
-            if (data.status === 'success') {
-                alert(`Interface ${data.module_name} saved successfully.`);
-            } else {
-                alert(`Error saving interface: ${data.error}`);
-            }
         });
 
         function processPendingDataEvents() {
@@ -169,7 +179,7 @@
                 if (el.dataset.key && validKeys.includes(el.dataset.key)) {
                     const value = data.data[el.dataset.key];
                     el.value = value !== undefined && value !== null ? value : 'N/A';
-                    //console.log(`Setting ${el.dataset.key} to ${el.value} for device ${data.address}`);
+                    console.log(`Setting ${el.dataset.key} to ${el.value} for device ${data.address}`);
                 } else {
                     console.warn(`Invalid or unknown data_key ${el.dataset.key} for device ${data.address}`);
                 }
@@ -197,24 +207,27 @@
         }
 
         function updateUI(newConfig) {
-            if (deepEqual(newConfig, config)) {
-                //console.log('Configuration unchanged, skipping UI update');
-                return;
-            }
-            console.log('Configuration changed, updating UI');
+            const activeDiv = document.getElementById('active-devices');
+            const newDiv = document.getElementById('new-devices');
+            const archivedDiv = document.getElementById('archived-devices');
+            
+            activeDiv.innerHTML = '';
+            newDiv.innerHTML = '';
+            archivedDiv.innerHTML = '';
 
-            updateSection('active-devices', newConfig.connections.filter(conn => conn.active), true);
-            updateSection('new-devices', newConfig.connections.filter(conn => !conn.active && conn.section === 'new_connections'));
-            updateSection('archived-devices', newConfig.connections.filter(conn => !conn.active && conn.section === 'archived'));
-        }
+            config.connections.forEach(conn => {
+                const div = createDeviceDiv(conn, true);
+                activeDiv.appendChild(div);
+            });
 
-        // Update a specific section
-        function updateSection(sectionId, connections, isActiveSection = false) {
-            const sectionDiv = document.getElementById(sectionId);
-            sectionDiv.innerHTML = ''; // Clear existing content
-            connections.forEach(conn => {
-                console.log(`Placing device ${conn.address} (${conn.name}) in ${isActiveSection ? 'Active' : sectionId === 'new-devices' ? 'New' : 'Archived'} Devices, active: ${conn.active}`);
-                sectionDiv.appendChild(createDeviceDiv(conn, isActiveSection));
+            config.new_connections.forEach(conn => {
+                const div = createDeviceDiv(conn, false);
+                newDiv.appendChild(div);
+            });
+
+            config.archived_connections.forEach(conn => {
+                const div = createDeviceDiv(conn, false);
+                archivedDiv.appendChild(div);
             });
         }
 
@@ -227,41 +240,17 @@
             if (isActive && conn.ui_components) {
                 conn.ui_components.forEach(ui => {
                     if (ui.type === 'text') {
-                        const textContainer = document.createElement('div');
-                        const label = document.createElement('label');
-                        label.textContent = `${ui.label}: `;
-                        const input = document.createElement('input');
-                        input.type = 'text';
-                        input.className = 'data-text';
-                        input.dataset.key = ui.data_key;
-                        input.readOnly = true;
-                        textContainer.appendChild(label);
-                        textContainer.appendChild(input);
-                        textContainer.appendChild(document.createElement('br'));
-                        div.appendChild(textContainer);
+                        div.innerHTML += `${ui.label}: <input type="text" class="data-text" data-key="${ui.data_key}" readonly><br>`;
                     } else if (ui.type === 'slider') {
-                        const sliderContainer = document.createElement('div');
-                        const label = document.createElement('label');
-                        label.textContent = `${ui.label}: `;
-                        const slider = document.createElement('input');
-                        slider.type = 'range';
-                        slider.min = ui.min;
-                        slider.max = ui.max;
-                        slider.value = ui.initial_value !== undefined ? ui.initial_value : 90;
-                        slider.dataset.channel = ui.channel;
+                        div.innerHTML += `${ui.label}: <input type="range" min="${ui.min}" max="${ui.max}" data-channel="${ui.channel}"><br>`;
+                        const slider = div.querySelector(`input[data-channel="${ui.channel}"]`);
                         slider.oninput = () => {
-                            const data = {
+                            socket.emit('write_device', {
                                 address: conn.address,
                                 value: parseInt(slider.value),
                                 channel: parseInt(ui.channel)
-                            };
-                            console.log(`Emitting write_device for channel ${ui.channel}:`, data);
-                            socket.emit('write_device', data);
+                            });
                         };
-                        sliderContainer.appendChild(label);
-                        sliderContainer.appendChild(slider);
-                        sliderContainer.appendChild(document.createElement('br'));
-                        div.appendChild(sliderContainer);
                     }
                 });
             }
@@ -277,8 +266,6 @@
         function showConfigForm(conn) {
             const popover = document.getElementById('popover');
             const popoverContent = document.getElementById('popover-content');
-            const hasReadInterval = conn.read_interval !== undefined;
-            const readIntervalStyle = hasReadInterval ? '' : 'class="hidden"';
             popoverContent.innerHTML = `
                 <h2>Configure Device</h2>
                 <p>Address: ${conn.address}</p>
@@ -286,47 +273,109 @@
                 <label>Interface Module: <input type="text" id="interface_module" value="${conn.interface_module || ''}"></label>
                 <label>Interface Class: <input type="text" id="interface_class" value="${conn.interface_class || ''}"></label>
                 <label>UI Components (JSON): <textarea id="ui_components">${JSON.stringify(conn.ui_components || [], null, 2)}</textarea></label>
-                <label>Interface Code: <textarea id="interface_code" rows="20" cols="50"></textarea></label><br>
-                <label ${readIntervalStyle} id="read_interval_label">Read Interval (seconds): <input type="number" id="read_interval" step="0.1" min="0" value="${conn.read_interval || 0.1}"></label><br>
-                <button type="button" class="save" onclick="saveConfig('${conn.address}')">Save</button>
+                <label>Interface Code:
+                    <div class="interface-code-container">
+                        <textarea id="interface_code_textarea" rows="10" cols="50"></textarea>
+                        <button id="ai_code_button" style="display: none;">AI Code</button>
+                        <button id="save_code_button">Save Code</button>
+                        <div id="loading_indicator" style="display: none;">Loading...</div>
+                        <div id="error_message" style="display: none;"></div>
+                    </div>
+                </label>
+                <button type="button" class="save" onclick="saveConfig('${conn.address}')">Save Configuration</button>
                 <button type="button" class="cancel" onclick="closePopover()">Cancel</button>
             `;
             popover.classList.remove('hidden');
 
-            const interfaceModuleInput = document.getElementById('interface_module');
-            const interfaceCodeTextarea = document.getElementById('interface_code');
-            
-            // Load code only if a module name exists
-            if (interfaceModuleInput.value) {
-                socket.emit('get_interface_code', interfaceModuleInput.value);
+            // Set up event listeners
+            const interfaceCodeTextarea = document.getElementById('interface_code_textarea');
+            const aiCodeButton = document.getElementById('ai_code_button');
+            const saveCodeButton = document.getElementById('save_code_button');
+            const loadingIndicator = document.getElementById('loading_indicator');
+            const errorMessage = document.getElementById('error_message');
+
+            interfaceCodeTextarea.addEventListener('input', () => {
+                if (interfaceCodeTextarea.value.trim() === '') {
+                    aiCodeButton.style.display = 'inline-block';
+                } else {
+                    aiCodeButton.style.display = 'none';
+                }
+            });
+
+            aiCodeButton.addEventListener('click', () => {
+                const deviceName = document.getElementById('name').value;
+                if (!deviceName) {
+                    errorMessage.textContent = 'Please provide a device name.';
+                    errorMessage.style.display = 'block';
+                    return;
+                }
+                aiCodeButton.disabled = true;
+                loadingIndicator.style.display = 'block';
+                errorMessage.style.display = 'none';
+
+                fetch('/get_base_py')
+                    .then(response => response.text())
+                    .then(basePyCode => {
+                        fetch('/generate_interface_code', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ base_py: basePyCode, device_name: deviceName })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (document.getElementById('interface_code_textarea')) {
+                                interfaceCodeTextarea.value = data.code;
+                                aiCodeButton.style.display = 'none';
+                            }
+                        })
+                        .catch(error => {
+                            errorMessage.textContent = 'Error generating code: ' + error.message;
+                            errorMessage.style.display = 'block';
+                        })
+                        .finally(() => {
+                            aiCodeButton.disabled = false;
+                            loadingIndicator.style.display = 'none';
+                        });
+                    })
+                    .catch(error => {
+                        errorMessage.textContent = 'Error fetching base.py: ' + error.message;
+                        errorMessage.style.display = 'block';
+                        aiCodeButton.disabled = false;
+                        loadingIndicator.style.display = 'none';
+                    });
+            });
+
+            saveCodeButton.addEventListener('click', () => {
+                const interfaceModule = document.getElementById('interface_module').value;
+                const interfaceCode = document.getElementById('interface_code_textarea').value;
+                if (!interfaceModule) {
+                    errorMessage.textContent = 'Please provide an interface module name.';
+                    errorMessage.style.display = 'block';
+                    return;
+                }
+                fetch('/save_interface_code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ module_name: interfaceModule, code: interfaceCode })
+                })
+                .then(response => {
+                    if (response.ok) {
+                        alert('Code saved successfully');
+                    } else {
+                        alert('Failed to save code');
+                    }
+                })
+                .catch(error => {
+                    errorMessage.textContent = 'Error saving code: ' + error.message;
+                    errorMessage.style.display = 'block';
+                });
+            });
+
+            if (interfaceCodeTextarea.value.trim() === '') {
+                aiCodeButton.style.display = 'inline-block';
             } else {
-                interfaceCodeTextarea.value = '// Enter module name and save to load code';
+                aiCodeButton.style.display = 'none';
             }
-
-            interfaceModuleInput.addEventListener('change', () => {
-                const moduleName = interfaceModuleInput.value;
-                if (moduleName) {
-                    socket.emit('get_interface_code', moduleName);
-                } else {
-                    interfaceCodeTextarea.value = '// Enter module name and save to load code';
-                }
-            });
-
-            const readIntervalLabel = document.getElementById('read_interval_label');
-            interfaceModuleInput.addEventListener('input', () => {
-                const module = interfaceModuleInput.value;
-                const existingConn = [
-                    ...config.connections,
-                    ...config.new_connections,
-                    ...config.archived_connections
-                ].find(c => c.interface_module === module);
-                if (existingConn && existingConn.read_interval !== undefined) {
-                    readIntervalLabel.classList.remove('hidden');
-                    document.getElementById('read_interval').value = existingConn.read_interval || 0.1;
-                } else {
-                    readIntervalLabel.classList.add('hidden');
-                }
-            });
         }
 
         function closePopover() {
@@ -335,31 +384,25 @@
         }
 
         function saveConfig(address) {
+            const name = document.getElementById('name').value;
+            const interface_module = document.getElementById('interface_module').value;
+            const interface_class = document.getElementById('interface_class').value;
+            let ui_components;
+            try {
+                ui_components = JSON.parse(document.getElementById('ui_components').value || '[]');
+            } catch (e) {
+                alert('Invalid JSON in UI Components');
+                return;
+            }
+
             const updatedConn = {
-                address,
-                name: document.getElementById('name').value,
-                interface_module: document.getElementById('interface_module').value,
-                interface_class: document.getElementById('interface_class').value,
-                ui_components: JSON.parse(document.getElementById('ui_components').value || '[]'),
+                address: address,
+                name: name,
+                interface_module: interface_module,
+                interface_class: interface_class,
+                ui_components: ui_components,
                 active: config.connections.some(c => c.address === address) ? 1 : 0
             };
-
-            const interfaceCode = document.getElementById('interface_code').value;
-            const moduleName = document.getElementById('interface_module').value;
-            if (moduleName && interfaceCode) {
-                socket.emit('save_interface_code', {
-                    module_name: updatedConn.interface_module,
-                    code: interfaceCode
-                });
-            }
-
-            const readIntervalLabel = document.getElementById('read_interval_label');
-            if (!readIntervalLabel.classList.contains('hidden')) {
-                const readInterval = parseFloat(document.getElementById('read_interval').value);
-                if (!isNaN(readInterval) && readInterval >= 0) {
-                    updatedConn.read_interval = readInterval;
-                }
-            }
 
             let section = 'connections';
             if (config.new_connections.some(c => c.address === address)) {
@@ -375,11 +418,21 @@
                 if (section === 'new_connections') {
                     config.connections.push(updatedConn);
                     config.new_connections.splice(index, 1);
+                } else if (section === 'archived_connections') {
+                    config.archived_connections.splice(index, 1);
+                    if (updatedConn.active) {
+                        config.connections.push(updatedConn);
+                    } else {
+                        config.archived_connections.push(updatedConn);
+                    }
                 }
+            } else {
+                config.connections.push(updatedConn);
             }
 
             socket.emit('update_config', config);
             closePopover();
         }
     </script>
+</body>
 </html>
