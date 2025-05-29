@@ -1,6 +1,5 @@
 import eventlet
-# Enable eventlet's monkey patching for asynchronous operations
-eventlet.monkey_patch()  # Must be the very first thing to avoid import conflicts
+eventlet.monkey_patch()
 
 import json
 import time
@@ -8,8 +7,8 @@ import importlib
 import smbus
 import os
 import logging
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
+from flask import Flask, request, jsonify
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -23,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-socketio = SocketIO(app, async_mode='eventlet')  # Set async_mode to 'eventlet'
+socketio = SocketIO(app, async_mode='eventlet')
 
 # Configuration file
 CONFIG_FILE = 'i2c_config.json'
@@ -36,6 +35,13 @@ config = {
     "archived_connections": []
 }
 reading_tasks = {}
+
+# Directory where interface files are stored
+INTERFACES_DIR = 'interfaces'
+
+# Grok API configuration (replace with actual values)
+GROK_API_URL = 'https://api.grok.ai/generate_code'  # Placeholder
+GROK_API_KEY = 'your_grok_api_key'  # Replace with actual key
 
 def load_config():
     global config
@@ -97,7 +103,6 @@ def update_device_status():
         current_devices = scan_i2c_bus()
         load_config()
         
-        # Update existing connections
         for conn in config['connections'][:]:
             if conn['address'] not in current_devices and conn['active']:
                 conn['active'] = 0
@@ -107,7 +112,6 @@ def update_device_status():
                     del device_instances[conn['address']]
                 logger.info(f"Archived device {conn['address']} ({conn['name']})")
         
-        # Check archived connections
         for conn in config['archived_connections'][:]:
             if conn['address'] in current_devices and not conn['active']:
                 conn['active'] = 1
@@ -116,13 +120,11 @@ def update_device_status():
                 initialize_device(conn)
                 logger.info(f"Restored device {conn['address']} ({conn['name']}) from archived")
         
-        # Clean up new_connections to avoid duplicates
         config['new_connections'] = [
             conn for conn in config['new_connections']
             if conn['address'] not in {c['address'] for c in config['connections'] + config['archived_connections']}
         ]
         
-        # Detect new devices
         known_addresses = {conn['address'] for conn in config['connections'] + config['new_connections'] + config['archived_connections']}
         for addr in current_devices:
             if addr not in known_addresses:
@@ -138,7 +140,7 @@ def update_device_status():
         save_config()
         socketio.emit('config_update', config)
         manage_reading_tasks()
-        eventlet.sleep(5)  # Use eventlet.sleep instead of time.sleep
+        eventlet.sleep(5)
 
 def initialize_device(conn):
     if conn['active'] and conn['address'] not in device_instances:
@@ -162,6 +164,51 @@ def initialize_device(conn):
 def index():
     return render_template('index.html')
 
+@app.route('/get_base_py', methods=['GET'])
+def get_base_py():
+    """Return the content of base.py."""
+    try:
+        with open(os.path.join(INTERFACES_DIR, 'base.py'), 'r') as file:
+            return file.read(), 200
+    except Exception as e:
+        return str(e), 500
+
+@app.route('/generate_interface_code', methods=['POST'])
+def generate_interface_code():
+    """Generate interface code using Grok API."""
+    data = request.json
+    base_py = data.get('base_py')
+    device_name = data.get('device_name')
+
+    if not base_py or not device_name:
+        return jsonify({'error': 'Missing base_py or device_name'}), 400
+
+    headers = {
+        'Authorization': f'Bearer {GROK_API_KEY}',
+        'Content-Type': 'application/json'
+    }
+    prompt = (
+        f"Based on the following base class:\n\n{base_py}\n\n"
+        f"Generate an interface class for the I2C device named '{device_name}'. "
+        f"The class should inherit from the BaseI2CDevice class and implement the necessary methods "
+        f"(e.g., read, write) tailored for the {device_name} device. "
+        f"Ensure the code is complete, functional, and follows Python best practices."
+    )
+    payload = {
+        'prompt': prompt,
+        'model': 'grok-3'  # Replace with actual model if needed
+    }
+
+    try:
+        response = requests.post(GROK_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        generated_code = response.json().get('code')
+        if not generated_code:
+            return jsonify({'error': 'No code generated'}), 500
+        return jsonify({'code': generated_code}), 200
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': str(e)}), 500
+
 @socketio.on('connect')
 def handle_connect():
     load_config()
@@ -170,28 +217,24 @@ def handle_connect():
 @socketio.on('update_config')
 def handle_update_config(updated_config):
     global config
-    # Deduplicate the received configuration
     deduped_config = {
         "connections": [],
         "new_connections": [],
         "archived_connections": []
     }
     
-    # Collect all connections
     all_conns = (
         updated_config.get('connections', []) +
         updated_config.get('new_connections', []) +
         updated_config.get('archived_connections', [])
     )
     
-    # Deduplicate by address
     address_map = {}
     for conn in all_conns:
         addr = conn['address']
         if addr not in address_map:
             address_map[addr] = conn
         else:
-            # Prioritize connections with interface_module and specific name
             existing = address_map[addr]
             if 'interface_module' in conn and conn['interface_module'] and ('interface_module' not in existing or not existing['interface_module']):
                 address_map[addr] = conn
@@ -199,7 +242,6 @@ def handle_update_config(updated_config):
                 address_map[addr] = conn
         logger.info(f"Deduplicating: Keeping {conn['address']} with name {conn['name']}")
 
-    # Rebuild config
     for addr, conn in address_map.items():
         if conn.get('active', 0) == 1:
             deduped_config['connections'].append(conn)
@@ -240,12 +282,10 @@ def handle_list_interfaces():
     emit('interface_list', interfaces)
 
 @socketio.on('get_interface_code')
-def handle_get_interface_code(module_name):# Check if module_name is empty or not provided
+def handle_get_interface_code(module_name):
     if not module_name or module_name.strip() == '':
         emit('interface_code', {'error': 'No module name provided'})
         return
-    
-    # Try to read the file if a valid module_name is given
     try:
         with open(f'interfaces/{module_name}.py', 'r') as f:
             code = f.read()
@@ -273,9 +313,7 @@ if __name__ == '__main__':
     
     manage_reading_tasks()
     
-    # Start background tasks using eventlet's GreenPool
     pool = eventlet.GreenPool()
     pool.spawn(update_device_status)
     
-    # Run the app using eventlet's WSGI server
     eventlet.wsgi.server(eventlet.listen(('', 5000)), app)
